@@ -9,7 +9,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
+import asyncio
+from fastapi.responses import FileResponse
 
 # =========================
 # ENV
@@ -482,3 +483,70 @@ async def search_bundle(
         tfidf_recommendations=tfidf_items,
         genre_recommendations=genre_recs,
     )
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(os.path.join(BASE_DIR, "index.html"))
+
+@app.get("/app.js", include_in_schema=False)
+def js():
+    return FileResponse(os.path.join(BASE_DIR, "app.js"))
+
+@app.get("/style.css", include_in_schema=False)
+def css():
+    return FileResponse(os.path.join(BASE_DIR, "style.css"))
+
+@app.get("/movie/full/{tmdb_id}")
+async def movie_full(tmdb_id: int):
+    d = await tmdb_get(f"/movie/{tmdb_id}", {"language": "en-US", "append_to_response": "credits,videos"})
+    credits = d.get("credits") or {}
+    crew_all = credits.get("crew") or []
+    wanted = {"Screenplay", "Writer", "Story", "Original Music Composer", "Director of Photography"}
+    trailer_key = next(
+        (v["key"] for v in (d.get("videos") or {}).get("results", [])
+         if v.get("site") == "YouTube" and v.get("type") == "Trailer"), None)
+    langs = d.get("spoken_languages") or []
+    return {
+        "tmdb_id": int(d["id"]),
+        "title": d.get("title") or "",
+        "tagline": d.get("tagline") or None,
+        "overview": d.get("overview") or None,
+        "release_date": d.get("release_date") or None,
+        "runtime": d.get("runtime") or None,
+        "language": langs[0].get("english_name") if langs else None,
+        "genres": d.get("genres") or [],
+        "vote_average": d.get("vote_average"),
+        "vote_count": d.get("vote_count") or 0,
+        "poster_url": make_img_url(d.get("poster_path")),
+        "backdrop_url": make_img_url(d.get("backdrop_path")),
+        "imdb_id": d.get("imdb_id"),
+        "trailer_key": trailer_key,
+        "trailer_url": f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None,
+        "directors": [c["name"] for c in crew_all if c.get("job") == "Director"],
+        "cast": [{"name": p["name"], "character": p.get("character"),
+                  "profile_url": make_img_url(p.get("profile_path"))}
+                 for p in (credits.get("cast") or [])[:20]],
+        "crew": [{"job": c["job"], "name": c["name"]} for c in crew_all if c.get("job") in wanted][:12],
+        "production_companies": [{"name": c["name"]} for c in d.get("production_companies") or []],
+        "production_countries": [c["name"] for c in d.get("production_countries") or []],
+        "status": d.get("status"),
+        "budget": d.get("budget") or 0,
+        "revenue": d.get("revenue") or 0,
+        "homepage": d.get("homepage") or None,
+    }
+
+@app.get("/recommend/similar")
+async def recommend_similar(tmdb_id: int = Query(...), top_n: int = Query(12, ge=1, le=30)):
+    details = await tmdb_movie_details(tmdb_id)
+    try:
+        recs = tfidf_recommend_titles(details.title, top_n=top_n)
+    except HTTPException as e:
+        if e.status_code == 404:
+            return {"in_dataset": False, "movie_title": details.title, "recommendations": []}
+        raise
+    cards = await asyncio.gather(*(attach_tmdb_card_by_title(t) for t, _ in recs))
+    return {
+        "in_dataset": True,
+        "movie_title": details.title,
+        "recommendations": [{"title": t, "score": s, "tmdb": c} for (t, s), c in zip(recs, cards)],
+    }
