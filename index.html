@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marquee · Find your next film</title>
+  <meta name="description" content="Browse films, read the details and find similar movies with a recommendation model." />
+  <meta name="theme-color" content="#0d0919" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300;1,6..72,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Marquee home">Marquee</a>
+      <label class="search">
+        <span class="visually-hidden">Search movies</span>
+        <span class="search-ico" id="search-ico" aria-hidden="true"></span>
+        <input id="search" type="search" placeholder="Search for a film" autocomplete="off" spellcheck="false" />
+      </label>
+    </header>
+
+    <main class="page">
+      <nav class="tabs" id="tabs" aria-label="Browse"></nav>
+
+      <div class="feed-head">
+        <h1 id="feed-title">Trending today</h1>
+        <p id="feed-sub" class="feed-sub"></p>
+      </div>
+
+      <div id="grid" class="grid" aria-live="polite"></div>
+      <div id="feed-msg" class="feed-msg" hidden></div>
+    </main>
+
+    <footer class="site-foot">
+      <p>Film data and images from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+    </footer>
+  </div>
+
+  <!-- Movie details -->
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-label="Movie details" hidden>
+    <button id="back-btn" class="glass-btn back-btn" type="button">
+      <span class="ico" id="back-ico" aria-hidden="true"></span>
+      <span>Back to Discovery</span>
+    </button>
+    <div id="sheet-scroll" class="sheet-scroll" tabindex="-1"></div>
+  </div>
+
+  <!-- Trailer -->
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Trailer" hidden>
+    <div class="lb-bar">
+      <a id="lb-yt" class="lb-link" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+      <button id="lb-close" class="glass-btn icon-only" type="button" aria-label="Close trailer"></button>
+    </div>
+    <div class="lb-frame" id="lb-frame"></div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
