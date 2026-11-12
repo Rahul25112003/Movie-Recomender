@@ -5,4 +5,4 @@ httpx
 numpy
 scipy
 pandas
-scikit-learn
+scikit-learn==1.9.1
