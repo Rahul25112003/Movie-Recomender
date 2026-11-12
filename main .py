@@ -1,5 +1,6 @@
 import os
 import pickle
+import re
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Tuple
@@ -8,6 +9,7 @@ import numpy as np
 import pandas as pd
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -21,6 +23,8 @@ TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG_500 = "https://image.tmdb.org/t/p/w500"
+TMDB_IMG_780 = "https://image.tmdb.org/t/p/w780"  # detail-page poster
+TMDB_IMG_1280 = "https://image.tmdb.org/t/p/w1280"  # full-width backdrop
 
 if not TMDB_API_KEY:
     raise RuntimeError("TMDB_API_KEY missing. Set it in .env locally or in Render > Environment.")
@@ -107,6 +111,10 @@ def make_img_url(path: Optional[str]) -> Optional[str]:
     return f"{TMDB_IMG_500}{path}"
 
 
+def make_img_url_size(path: Optional[str], base: str) -> Optional[str]:
+    return f"{base}{path}" if path else None
+
+
 async def tmdb_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Safe TMDB GET: network errors and TMDB errors become HTTP 502."""
     q = dict(params)
@@ -120,11 +128,21 @@ async def tmdb_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"TMDB request error: {type(e).__name__} | {repr(e)}",
         )
 
+    if r.status_code == 401:
+        raise HTTPException(
+            status_code=502,
+            detail="TMDB rejected the API key. Check TMDB_API_KEY in your environment settings.",
+        )
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="TMDB couldn't find that item.")
     if r.status_code != 200:
         raise HTTPException(
-            status_code=502, detail=f"TMDB error {r.status_code}: {r.text}"
+            status_code=502, detail=f"TMDB error {r.status_code}: {r.text[:300]}"
         )
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="TMDB returned an unreadable response.")
 
 
 async def tmdb_cards_from_results(
@@ -367,15 +385,24 @@ async def movie_full(tmdb_id: int):
         "Director of Photography",
     }
 
-    trailer_key = next(
-        (
-            v["key"]
-            for v in (d.get("videos") or {}).get("results", [])
-            if v.get("site") == "YouTube" and v.get("type") == "Trailer"
-        ),
-        None,
-    )
+    trailers = [
+        v
+        for v in (d.get("videos") or {}).get("results", [])
+        if v.get("site") == "YouTube"
+        and v.get("type") == "Trailer"
+        and re.fullmatch(r"[\w-]{11}", v.get("key") or "")
+    ]
+    trailers.sort(key=lambda v: not v.get("official", False))  # official trailers first
+    trailer_key = trailers[0]["key"] if trailers else None
+
+    # Language = the film's original language, not just the first spoken one.
+    code = d.get("original_language")
     langs = d.get("spoken_languages") or []
+    language = next(
+        (l.get("english_name") or l.get("name") for l in langs if l.get("iso_639_1") == code),
+        None,
+    ) or (code.upper() if code else None)
+    votes = d.get("vote_count") or 0
 
     return {
         "tmdb_id": int(d["id"]),
@@ -384,12 +411,12 @@ async def movie_full(tmdb_id: int):
         "overview": d.get("overview") or None,
         "release_date": d.get("release_date") or None,
         "runtime": d.get("runtime") or None,
-        "language": langs[0].get("english_name") if langs else None,
+        "language": language,
         "genres": d.get("genres") or [],
-        "vote_average": d.get("vote_average"),
-        "vote_count": d.get("vote_count") or 0,
-        "poster_url": make_img_url(d.get("poster_path")),
-        "backdrop_url": make_img_url(d.get("backdrop_path")),
+        "vote_average": d.get("vote_average") if votes > 0 else None,
+        "vote_count": votes,
+        "poster_url": make_img_url_size(d.get("poster_path"), TMDB_IMG_780),
+        "backdrop_url": make_img_url_size(d.get("backdrop_path"), TMDB_IMG_1280),
         "imdb_id": d.get("imdb_id"),
         "trailer_key": trailer_key,
         "trailer_url": f"https://www.youtube.com/watch?v={trailer_key}"
@@ -464,7 +491,7 @@ async def recommend_similar(
 ):
     details = await tmdb_movie_details(tmdb_id)
     try:
-        recs = tfidf_recommend_titles(details.title, top_n=top_n)
+        recs = await run_in_threadpool(tfidf_recommend_titles, details.title, top_n)
     except HTTPException as e:
         if e.status_code == 404:
             return {
